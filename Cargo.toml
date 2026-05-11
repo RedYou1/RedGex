@@ -3,6 +3,10 @@ name = "redgex"
 version = "0.1.0"
 edition = "2024"
 resolver = "2"
+repository = "https://github.com/RedYou1/RedGex"
+description = "simple regex library"
+license = "Apache-2.0"
+categories = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
