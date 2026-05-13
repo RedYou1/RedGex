@@ -74,43 +74,43 @@ fn get_end_of_static1() {
 fn matchs1() {
     assert_eq!(
         vec![
+            vec!["ABC"],
+            vec!["AB"],
             vec!["A"],
+            vec!["BC"],
             vec!["B"],
             vec!["C"],
-            vec!["AB"],
-            vec!["BC"],
-            vec!["ABC"]
         ],
-        crate::matchs("ABC", "[a-zA-Z]+")
+        crate::all_matchs("ABC", "[a-zA-Z]+")
     );
     assert_eq!(
         vec![
-            vec![""],
+            vec!["ABC"],
+            vec!["AB"],
             vec!["A"],
+            vec![""],
+            vec!["BC"],
             vec!["B"],
             vec!["C"],
-            vec!["AB"],
-            vec!["BC"],
-            vec!["ABC"]
         ],
-        crate::matchs("ABC", "[a-zA-Z]*")
+        crate::all_matchs("ABC", "[a-zA-Z]*")
     );
     assert_eq!(
-        vec![vec![""], vec!["A"], vec!["AB"], vec!["ABC"]],
-        crate::matchs("ABC", "^[a-zA-Z]*")
+        vec![vec!["ABC"], vec!["AB"], vec!["A"], vec![""],],
+        crate::all_matchs("ABC", "^[a-zA-Z]*")
     );
     assert_eq!(
-        vec![vec!["C"], vec!["BC"], vec!["ABC"]],
-        crate::matchs("ABC", "[a-zA-Z]*$")
+        vec![vec!["ABC"], vec!["BC"], vec!["C"],],
+        crate::all_matchs("ABC", "[a-zA-Z]*$")
     );
-    assert_eq!(vec![vec!["ABC"]], crate::matchs("ABC", "^[a-zA-Z]*$"));
+    assert_eq!(vec![vec!["ABC"]], crate::all_matchs("ABC", "^[a-zA-Z]*$"));
 }
 
 #[test]
 fn matchs2() {
     assert_eq!(
         vec![vec!["abbabacabbaba", "abbaba", "a"]],
-        crate::matchs("abbabacabbaba", "^((a|b)*)c\\1$")
+        crate::all_matchs("abbabacabbaba", "^((a|b)*)c\\1$")
     );
 }
 
@@ -120,21 +120,32 @@ fn matchs3() {
 
     assert_eq!(
         vec![vec!["a7;r,\t$", "a7;r", "$"]],
-        crate::matchs("a7;r,\t$", pattern)
+        crate::all_matchs("a7;r,\t$", pattern)
     );
 
     assert_eq!(
         vec![vec!["a7;r,\ta7;r", "a7;r", "a7;r"]],
-        crate::matchs("a7;r,\ta7;r", pattern)
+        crate::all_matchs("a7;r,\ta7;r", pattern)
     );
 }
 
 #[test]
 fn match4() {
-    assert!(
-        crate::matchs(
+    assert_eq!(
+        Some(vec![
             "Jan 22 09:15:05 127.0.0.1 [S=207470958] [SID=90ae9b:28:6748965]  (N 13929029)  (#3125)gwSession[Allocated]. Handle:0000005576E58A90; Global session ID: 5ad3083ec1e86aee [Time:20-01@09:15:04.832]",
-            "([A-z]{3} [\\d]{2} [\\d]{1,2}:[\\d]{1,2}:[\\d]{1,2}) ([\\d]{1,3}\\.[\\d]{1,3}\\.[\\d]{1,3}\\.[\\d]{1,3}) (\\[S\\=[\\d]{9}\\]) (\\[[A-z]ID=.{1,18}\\])\\s{1,3}(\\(N\\s[\\d]{5,20}\\))?(\\s+(.*))\\s{1,3}(\\[Time:.*\\])?"
-        ).iter().any(|v| v[0] == "Jan 22 09:15:05 127.0.0.1 [S=207470958] [SID=90ae9b:28:6748965]  (N 13929029)  (#3125)gwSession[Allocated]. Handle:0000005576E58A90; Global session ID: 5ad3083ec1e86aee [Time:20-01@09:15:04.832]")
+            "Jan 22 09:15:05",
+            "127.0.0.1",
+            "[S=207470958]",
+            "[SID=90ae9b:28:6748965]",
+            "",
+            " (N 13929029)  (#3125)gwSession[Allocated]. Handle:0000005576E58A90; Global session ID: 5ad3083ec1e86aee",
+            "(N 13929029)  (#3125)gwSession[Allocated]. Handle:0000005576E58A90; Global session ID: 5ad3083ec1e86aee",
+            "[Time:20-01@09:15:04.832]"
+        ]),
+        crate::first_match(
+            "Jan 22 09:15:05 127.0.0.1 [S=207470958] [SID=90ae9b:28:6748965]  (N 13929029)  (#3125)gwSession[Allocated]. Handle:0000005576E58A90; Global session ID: 5ad3083ec1e86aee [Time:20-01@09:15:04.832]",
+            "([A-z]{3} [\\d]{2} [\\d]{1,2}:[\\d]{1,2}:[\\d]{1,2}) ([\\d]{1,3}\\.[\\d]{1,3}\\.[\\d]{1,3}\\.[\\d]{1,3}) (\\[S\\=[\\d]{9}\\]) (\\[[A-z]ID=.{1,18}\\])\\s{1,3}(\\(N\\s[\\d]{5,20}\\))?(\\s+(.*))\\s{1,3}?(\\[Time:.*\\])?"
+        )
     );
 }

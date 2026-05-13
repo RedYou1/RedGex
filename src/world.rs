@@ -19,7 +19,7 @@ pub enum Check {
     Static(Rc<str>),
     AnyOf(Rc<str>),
     NoneOf(Rc<str>),
-    MultipleOf(usize, usize, RangeInclusive<usize>),
+    MultipleOf(usize, usize, RangeInclusive<usize>, bool),
     SameAs(usize),
 }
 
@@ -45,10 +45,15 @@ impl Node {
             nexts: Vec::new(),
         });
         parents.push(id);
-        // others can push into nexts in sub_construct
-        let mut r = World::sub_construct(pattern, nodes, groups, sames, parents, push_end);
-        nodes[id].nexts.append(&mut r);
-        nodes[id].nexts.dedup();
+        World::sub_construct(
+            pattern,
+            nodes,
+            groups,
+            sames,
+            parents,
+            &mut |nodes, elem| unsafe { nodes.as_mut_unchecked()[id].nexts.insert(0, elem) },
+            push_end,
+        );
         id
     }
 
@@ -58,7 +63,7 @@ impl Node {
         nodes: &mut Vec<Node>,
         groups: &mut Vec<usize>,
         sames: &mut usize,
-        mut parents: Vec<usize>,
+        parents: Vec<usize>,
         push_end: bool,
     ) -> usize {
         let id = nodes.len();
@@ -66,10 +71,15 @@ impl Node {
             check,
             nexts: Vec::new(),
         });
-        // others can push into nexts in sub_construct
-        let mut r = World::sub_construct(pattern, nodes, groups, sames, parents, push_end);
-        nodes[id].nexts.append(&mut r);
-        nodes[id].nexts.dedup();
+        World::sub_construct(
+            pattern,
+            nodes,
+            groups,
+            sames,
+            parents,
+            &mut |nodes, elem| unsafe { nodes.as_mut_unchecked()[id].nexts.insert(0, elem) },
+            push_end,
+        );
         id
     }
 }
@@ -94,11 +104,18 @@ impl World {
             Check::StartGroup(_) => true,
             Check::EndGroup(id) => self.register_group[*id].is_some(),
             Check::Static(check) => {
-                self.current_idx < text.len() && text[self.current_idx..].starts_with(check.as_ref())
+                self.current_idx < text.len()
+                    && text[self.current_idx..].starts_with(check.as_ref())
             }
-            Check::AnyOf(poss) => self.current_idx < text.len() && poss.contains(&text[self.current_idx..=self.current_idx]),
-            Check::NoneOf(poss) => self.current_idx < text.len() && !poss.contains(&text[self.current_idx..=self.current_idx]),
-            Check::MultipleOf(_, _, _) => true, //later
+            Check::AnyOf(poss) => {
+                self.current_idx < text.len()
+                    && poss.contains(&text[self.current_idx..=self.current_idx])
+            }
+            Check::NoneOf(poss) => {
+                self.current_idx < text.len()
+                    && !poss.contains(&text[self.current_idx..=self.current_idx])
+            }
+            Check::MultipleOf(_, _, _, _) => true, //later
             Check::SameAs(id) => {
                 if let Some(r) = &self.groups[*id] {
                     self.current_idx < text.len()
@@ -123,20 +140,22 @@ impl World {
                 }
                 Check::Static(text) => text.len(),
                 Check::AnyOf(_) | Check::NoneOf(_) => 1,
-                Check::MultipleOf(_, same_id, _) => {
+                Check::MultipleOf(_, same_id, _, _) => {
                     self.time_same[*same_id] += 1;
                     0
                 }
                 Check::SameAs(id) => self.groups[*id].as_ref().unwrap().len(),
             };
         let mut nexts = current_node.nexts.clone();
-        if let Check::MultipleOf(id, same_id, range_inclusive) = &current_node.check {
+        if let Check::MultipleOf(id, same_id, range_inclusive, big_first) = &current_node.check {
             let time = self.time_same[*same_id];
             if time < *range_inclusive.start() {
                 nexts = vec![*id];
             } else if range_inclusive.contains(&time) {
                 nexts.push(*id);
-                nexts.dedup();
+                if *big_first {
+                    nexts.reverse();
+                }
             } else {
                 return None;
             }
@@ -159,11 +178,17 @@ impl World {
         if current.nexts.is_empty() {
             vec![of]
         } else {
-            current
+            let mut r = Vec::new();
+            for t in current
                 .nexts
                 .iter()
                 .flat_map(|next| World::leafs(nodes, *next))
-                .collect()
+            {
+                if !r.contains(&t) {
+                    r.push(t);
+                }
+            }
+            r
         }
     }
 
@@ -173,8 +198,9 @@ impl World {
         groups: &mut Vec<usize>,
         sames: &mut usize,
         mut parents: Vec<usize>,
+        parent_push: &mut impl FnMut(*mut Vec<Node>, usize),
         push_end: bool,
-    ) -> Vec<usize> {
+    ) {
         if pattern.is_empty() {
             if push_end {
                 let id = nodes.len();
@@ -182,41 +208,42 @@ impl World {
                     check: Check::End(false),
                     nexts: Vec::new(),
                 });
-                return vec![id];
-            } else {
-                return vec![];
-            };
+                parent_push(nodes, id);
+            }
+            return;
         }
         let ors = or_in_root(pattern);
         if !ors.is_empty() {
-            let mut nexts = Vec::with_capacity(ors.len() + 1);
-            nexts.append(&mut World::sub_construct(
+            World::sub_construct(
                 &pattern[..*ors.first().unwrap()],
                 nodes,
                 groups,
                 sames,
                 parents.clone(),
+                parent_push,
                 push_end,
-            ));
+            );
             for window in ors.windows(2) {
-                nexts.append(&mut World::sub_construct(
+                World::sub_construct(
                     &pattern[(window[0] + 1)..window[1]],
                     nodes,
                     groups,
                     sames,
                     parents.clone(),
+                    parent_push,
                     push_end,
-                ))
+                );
             }
-            nexts.append(&mut World::sub_construct(
+            World::sub_construct(
                 &pattern[(*ors.last().unwrap() + 1)..],
                 nodes,
                 groups,
                 sames,
                 parents,
+                parent_push,
                 push_end,
-            ));
-            return nexts;
+            );
+            return;
         }
 
         match &pattern.chars().collect::<Vec<char>>()[..] {
@@ -249,40 +276,46 @@ impl World {
                 );
                 for next in World::leafs(nodes, id) {
                     nodes[next].nexts.push(end_id);
-                    nodes[next].nexts.dedup();
                 }
-                vec![id]
+                parent_push(nodes, id);
             }
             ['[', '^', ..] => {
                 let end =
                     get_end_of_any(pattern).expect("pattern not valide. end of any not found.");
 
-                vec![Node::create(
-                    Check::NoneOf(expand_any(&pattern[2..end])),
-                    &pattern[(end + 1)..],
+                parent_push(
                     nodes,
-                    groups,
-                    sames,
-                    parents,
-                    push_end,
-                )]
+                    Node::create(
+                        Check::NoneOf(expand_any(&pattern[2..end])),
+                        &pattern[(end + 1)..],
+                        nodes,
+                        groups,
+                        sames,
+                        parents,
+                        push_end,
+                    ),
+                );
             }
             ['[', ..] => {
                 let end =
                     get_end_of_any(pattern).expect("pattern not valide. end of any not found.");
 
-                vec![Node::create(
-                    Check::AnyOf(expand_any(&pattern[1..end])),
-                    &pattern[(end + 1)..],
+                parent_push(
                     nodes,
-                    groups,
-                    sames,
-                    parents,
-                    push_end,
-                )]
+                    Node::create(
+                        Check::AnyOf(expand_any(&pattern[1..end])),
+                        &pattern[(end + 1)..],
+                        nodes,
+                        groups,
+                        sames,
+                        parents,
+                        push_end,
+                    ),
+                )
             }
-            ['.', ..] => {
-                vec![Node::create(
+            ['.', ..] => parent_push(
+                nodes,
+                Node::create(
                     Check::NoneOf(Rc::from("")),
                     &pattern[1..],
                     nodes,
@@ -290,61 +323,73 @@ impl World {
                     sames,
                     parents,
                     push_end,
-                )]
-            }
+                ),
+            ),
             ['?', ..] => {
-                if let Check::MultipleOf(_, _, _) = &nodes[*parents.last().unwrap()].check {
-                    panic!("doesn't support \"match as few as possible\"");
+                if let Check::MultipleOf(_, _, _, big_first) =
+                    &mut nodes[*parents.last().unwrap()].check
+                {
+                    assert!(*big_first);
+                    *big_first = false;
+                    World::sub_construct(
+                        &pattern[1..],
+                        nodes,
+                        groups,
+                        sames,
+                        parents,
+                        parent_push,
+                        push_end,
+                    );
+                } else {
+                    let ggp = *parents.iter().nth_back(1).unwrap();
+                    let same = *sames;
+                    *sames += 1;
+                    let r = Node::create(
+                        Check::MultipleOf(*parents.last().unwrap(), same, 0..=1, true),
+                        &pattern[1..],
+                        nodes,
+                        groups,
+                        sames,
+                        parents,
+                        push_end,
+                    );
+                    nodes[ggp].nexts.push(r);
+                    parent_push(nodes, r)
                 }
-                let ggp = *parents.iter().nth_back(1).unwrap();
-                let same = *sames;
-                *sames += 1;
-                let r = vec![Node::create(
-                    Check::MultipleOf(*parents.last().unwrap(), same, 0..=1),
-                    &pattern[1..],
-                    nodes,
-                    groups,
-                    sames,
-                    parents,
-                    push_end,
-                )];
-                nodes[ggp].nexts.push(r[0]);
-                nodes[ggp].nexts.dedup();
-                r
             }
             ['*', ..] => {
                 let ggp = *parents.iter().nth_back(1).unwrap();
                 let same = *sames;
                 *sames += 1;
-                let r = vec![Node::create(
-                    Check::MultipleOf(*parents.last().unwrap(), same, 0..=usize::MAX),
+                let r = Node::create(
+                    Check::MultipleOf(*parents.last().unwrap(), same, 0..=usize::MAX, true),
                     &pattern[1..],
                     nodes,
                     groups,
                     sames,
                     parents,
                     push_end,
-                )];
-                nodes[ggp].nexts.push(r[0]);
-                nodes[ggp].nexts.dedup();
-                r
+                );
+                nodes[ggp].nexts.push(r);
+                parent_push(nodes, r)
             }
             ['+', ..] => {
                 let same = *sames;
                 *sames += 1;
-                let r = vec![Node::create(
-                    Check::MultipleOf(*parents.last().unwrap(), same, 1..=usize::MAX),
+                let r = Node::create(
+                    Check::MultipleOf(*parents.last().unwrap(), same, 1..=usize::MAX, true),
                     &pattern[1..],
                     nodes,
                     groups,
                     sames,
                     parents,
                     push_end,
-                )];
-                r
+                );
+                parent_push(nodes, r)
             }
-            ['^', ..] => {
-                vec![Node::create(
+            ['^', ..] => parent_push(
+                nodes,
+                Node::create(
                     Check::Start(),
                     &pattern[1..],
                     nodes,
@@ -352,10 +397,11 @@ impl World {
                     sames,
                     parents,
                     push_end,
-                )]
-            }
-            ['$', ..] => {
-                vec![Node::create(
+                ),
+            ),
+            ['$', ..] => parent_push(
+                nodes,
+                Node::create(
                     Check::End(true),
                     &pattern[1..],
                     nodes,
@@ -363,26 +409,29 @@ impl World {
                     sames,
                     parents,
                     push_end,
-                )]
-            }
+                ),
+            ),
             ['\\', c, ..] if !".*+?(){}[]|^$\\".contains(*c) => {
                 if let Some(s) = PREFAB
                     .iter()
                     .find_map(|&(p, s)| p.eq_ignore_ascii_case(c).then_some(s))
                 {
-                    vec![Node::create(
-                        if c.to_ascii_lowercase() == *c {
-                            Check::AnyOf(Rc::from(s))
-                        } else {
-                            Check::NoneOf(Rc::from(s))
-                        },
-                        &pattern[2..],
+                    parent_push(
                         nodes,
-                        groups,
-                        sames,
-                        parents,
-                        push_end,
-                    )]
+                        Node::create(
+                            if c.to_ascii_lowercase() == *c {
+                                Check::AnyOf(Rc::from(s))
+                            } else {
+                                Check::NoneOf(Rc::from(s))
+                            },
+                            &pattern[2..],
+                            nodes,
+                            groups,
+                            sames,
+                            parents,
+                            push_end,
+                        ),
+                    )
                 } else if c.is_numeric() {
                     let mut group = c.to_string();
                     let mut pattern = &pattern[2..];
@@ -393,15 +442,18 @@ impl World {
                         pattern = &pattern[1..];
                     }
                     *sames += 1;
-                    vec![Node::create(
-                        Check::SameAs(group.parse().unwrap()),
-                        pattern,
+                    parent_push(
                         nodes,
-                        groups,
-                        sames,
-                        parents,
-                        push_end,
-                    )]
+                        Node::create(
+                            Check::SameAs(group.parse().unwrap()),
+                            pattern,
+                            nodes,
+                            groups,
+                            sames,
+                            parents,
+                            push_end,
+                        ),
+                    )
                 } else {
                     panic!("escape '{}' not supported.", *c);
                 }
@@ -426,67 +478,76 @@ impl World {
                     };
                     let same = *sames;
                     *sames += 1;
-                    let r = vec![Node::create(
-                        Check::MultipleOf(*parents.last().unwrap(), same, min..=max),
+                    let r = Node::create(
+                        Check::MultipleOf(*parents.last().unwrap(), same, min..=max, true),
                         &pattern[(end + 1)..],
                         nodes,
                         groups,
                         sames,
                         parents,
                         push_end,
-                    )];
+                    );
                     if min == 0 {
-                        nodes[ggp].nexts.push(r[0]);
-                        nodes[ggp].nexts.dedup();
+                        nodes[ggp].nexts.push(r);
                     }
-                    r
+                    parent_push(nodes, r)
                 } else {
                     let amount = inner.parse().unwrap();
                     let same = *sames;
                     *sames += 1;
                     assert!(amount > 0);
-                    let r = vec![Node::create(
-                        Check::MultipleOf(*parents.last().unwrap(), same, amount..=amount),
-                        &pattern[(end + 1)..],
+                    parent_push(
                         nodes,
-                        groups,
-                        sames,
-                        parents,
-                        push_end,
-                    )];
-                    r
+                        Node::create(
+                            Check::MultipleOf(
+                                *parents.last().unwrap(),
+                                same,
+                                amount..=amount,
+                                true,
+                            ),
+                            &pattern[(end + 1)..],
+                            nodes,
+                            groups,
+                            sames,
+                            parents,
+                            push_end,
+                        ),
+                    )
                 }
             }
             _ => {
                 let end = get_end_of_static(pattern);
                 let mut escape = false;
-                vec![Node::create(
-                    Check::Static(Rc::from(
-                        pattern[..end]
-                            .chars()
-                            .filter(|c| {
-                                if *c == '\\' {
-                                    if escape {
+                parent_push(
+                    nodes,
+                    Node::create(
+                        Check::Static(Rc::from(
+                            pattern[..end]
+                                .chars()
+                                .filter(|c| {
+                                    if *c == '\\' {
+                                        if escape {
+                                            escape = false;
+                                            true
+                                        } else {
+                                            escape = true;
+                                            false
+                                        }
+                                    } else {
                                         escape = false;
                                         true
-                                    } else {
-                                        escape = true;
-                                        false
                                     }
-                                } else {
-                                    escape = false;
-                                    true
-                                }
-                            })
-                            .collect::<String>(),
-                    )),
-                    &pattern[end..],
-                    nodes,
-                    groups,
-                    sames,
-                    parents,
-                    push_end,
-                )]
+                                })
+                                .collect::<String>(),
+                        )),
+                        &pattern[end..],
+                        nodes,
+                        groups,
+                        sames,
+                        parents,
+                        push_end,
+                    ),
+                )
             }
         }
     }
@@ -496,27 +557,67 @@ impl World {
         let mut groups = Vec::new();
         let mut sames = 0;
 
-        let current_node = Some(
-            World::sub_construct(
-                format!("({pattern})").as_str(),
-                &mut nodes,
-                &mut groups,
-                &mut sames,
-                vec![],
-                true,
-            )[0],
+        let mut res = Vec::new();
+        World::sub_construct(
+            format!("({pattern})").as_str(),
+            &mut nodes,
+            &mut groups,
+            &mut sames,
+            vec![],
+            &mut |_, elem| res.push(elem),
+            true,
         );
         World {
             current_idx: 0,
             groups: vec![None; groups.len()],
             register_group: vec![None; groups.len()],
             nodes: Rc::from(nodes),
-            current_node,
+            current_node: res.first().cloned(),
             time_same: vec![0; sames],
         }
     }
 
-    pub fn matchs<'a>(text: &'a str, pattern: &str) -> Vec<Vec<&'a str>> {
+    pub fn first_match<'a>(text: &'a str, pattern: &str) -> Option<Vec<&'a str>> {
+        let mut futures = VecDeque::with_capacity(text.len() + 10);
+        {
+            let w = World::construct(pattern);
+            for c in 1..text.len() {
+                let mut w = w.clone();
+                w.current_idx = c;
+                futures.push_back(w);
+            }
+            futures.push_front(w);
+        }
+        while let Some(current) = futures.pop_front() {
+            if let Some(nexts) = current.next(text) {
+                let mut i = 0;
+                for next in nexts {
+                    if let Some(node) = next.current_node {
+                        if let Check::End(false) = next.nodes[node].check {
+                            let r = next
+                                .groups
+                                .iter()
+                                .map(|g| {
+                                    if let Some(g) = g {
+                                        &text[g.clone()]
+                                    } else {
+                                        &text[0..0]
+                                    }
+                                })
+                                .collect();
+                            return Some(r);
+                        } else {
+                            futures.insert(i, next);
+                            i += 1;
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn all_matchs<'a>(text: &'a str, pattern: &str) -> Vec<Vec<&'a str>> {
         let mut futures = VecDeque::with_capacity(text.len() + 10);
         {
             let w = World::construct(pattern);
@@ -530,6 +631,7 @@ impl World {
         let mut res = Vec::new();
         while let Some(current) = futures.pop_front() {
             if let Some(nexts) = current.next(text) {
+                let mut i = 0;
                 for next in nexts {
                     if let Some(node) = next.current_node {
                         if let Check::End(false) = next.nodes[node].check {
@@ -548,7 +650,8 @@ impl World {
                                 res.push(r);
                             }
                         } else {
-                            futures.push_back(next);
+                            futures.insert(i, next);
+                            i += 1;
                         }
                     }
                 }
