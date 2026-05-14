@@ -81,7 +81,7 @@ fn matchs1() {
             vec!["B"],
             vec!["C"],
         ],
-        crate::all_matchs("ABC", "[a-zA-Z]+")
+        RedGex::new("[a-zA-Z]+").all_matchs_vec("ABC")
     );
     assert_eq!(
         vec![
@@ -93,39 +93,42 @@ fn matchs1() {
             vec!["B"],
             vec!["C"],
         ],
-        crate::all_matchs("ABC", "[a-zA-Z]*")
+        RedGex::new("[a-zA-Z]*").all_matchs_vec("ABC")
     );
     assert_eq!(
         vec![vec!["ABC"], vec!["AB"], vec!["A"], vec![""],],
-        crate::all_matchs("ABC", "^[a-zA-Z]*")
+        RedGex::new("^[a-zA-Z]*").all_matchs_vec("ABC")
     );
     assert_eq!(
         vec![vec!["ABC"], vec!["BC"], vec!["C"],],
-        crate::all_matchs("ABC", "[a-zA-Z]*$")
+        RedGex::new("[a-zA-Z]*$").all_matchs_vec("ABC")
     );
-    assert_eq!(vec![vec!["ABC"]], crate::all_matchs("ABC", "^[a-zA-Z]*$"));
+    assert_eq!(
+        vec![vec!["ABC"]],
+        RedGex::new("^[a-zA-Z]*$").all_matchs_vec("ABC")
+    );
 }
 
 #[test]
 fn matchs2() {
     assert_eq!(
         vec![vec!["abbabacabbaba", "abbaba", "a"]],
-        crate::all_matchs("abbabacabbaba", "^((a|b)*)c\\1$")
+        RedGex::new("^((a|b)*)c\\1$").all_matchs_vec("abbabacabbaba")
     );
 }
 
 #[test]
 fn matchs3() {
-    let pattern = "^([\\w;]{,5})\\D\\s(\\$|3|8|\\1)$";
+    let redgex = RedGex::new("^([\\w;]{,5})\\D\\s(\\$|3|8|\\1)$");
 
     assert_eq!(
         vec![vec!["a7;r,\t$", "a7;r", "$"]],
-        crate::all_matchs("a7;r,\t$", pattern)
+        redgex.all_matchs_vec("a7;r,\t$")
     );
 
     assert_eq!(
         vec![vec!["a7;r,\ta7;r", "a7;r", "a7;r"]],
-        crate::all_matchs("a7;r,\ta7;r", pattern)
+        redgex.all_matchs_vec("a7;r,\ta7;r")
     );
 }
 
@@ -143,9 +146,9 @@ fn match4() {
             "(N 13929029)  (#3125)gwSession[Allocated]. Handle:0000005576E58A90; Global session ID: 5ad3083ec1e86aee",
             "[Time:20-01@09:15:04.832]"
         ]),
-        crate::first_match(
-            "Jan 22 09:15:05 127.0.0.1 [S=207470958] [SID=90ae9b:28:6748965]  (N 13929029)  (#3125)gwSession[Allocated]. Handle:0000005576E58A90; Global session ID: 5ad3083ec1e86aee [Time:20-01@09:15:04.832]",
-            "([A-z]{3} [\\d]{2} [\\d]{1,2}:[\\d]{1,2}:[\\d]{1,2}) ([\\d]{1,3}\\.[\\d]{1,3}\\.[\\d]{1,3}\\.[\\d]{1,3}) (\\[S\\=[\\d]{9}\\]) (\\[[A-z]ID=.{1,18}\\])\\s{1,3}(\\(N\\s[\\d]{5,20}\\))?(\\s+(.*))\\s{1,3}?(\\[Time:.*\\])?"
+        RedGex::new("([A-z]{3} [\\d]{2} [\\d]{1,2}:[\\d]{1,2}:[\\d]{1,2}) ([\\d]{1,3}\\.[\\d]{1,3}\\.[\\d]{1,3}\\.[\\d]{1,3}) (\\[S\\=[\\d]{9}\\]) (\\[[A-z]ID=.{1,18}\\])\\s{1,3}(\\(N\\s[\\d]{5,20}\\))?(\\s+(.*))\\s{1,3}?(\\[Time:.*\\])?")
+        .first_match(
+            "Jan 22 09:15:05 127.0.0.1 [S=207470958] [SID=90ae9b:28:6748965]  (N 13929029)  (#3125)gwSession[Allocated]. Handle:0000005576E58A90; Global session ID: 5ad3083ec1e86aee [Time:20-01@09:15:04.832]"
         )
     );
 }

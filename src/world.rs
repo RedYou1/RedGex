@@ -1,15 +1,15 @@
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::VecDeque,
     ops::{Range, RangeInclusive},
     rc::Rc,
 };
 
-use crate::parse::{
+use crate::{RedGex, parse::{
     PREFAB, expand_any, get_end_of_any, get_end_of_group, get_end_of_static, or_in_root,
-};
+}};
 
 #[derive(Debug)]
-pub enum Check {
+enum Check {
     Start(),
     End(bool),
 
@@ -30,7 +30,7 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn create(
+    fn create(
         check: Check,
         pattern: &str,
         nodes: &mut Vec<Node>,
@@ -57,7 +57,7 @@ impl Node {
         id
     }
 
-    pub fn create_dont_append_parent(
+    fn create_dont_append_parent(
         check: Check,
         pattern: &str,
         nodes: &mut Vec<Node>,
@@ -95,8 +95,68 @@ pub struct World {
     time_same: Vec<usize>,
 }
 
+impl From<&RedGex> for World {
+    fn from(value: &RedGex) -> Self {
+        Self {
+            current_idx: 0,
+            groups: vec![None; value.groups],
+            register_group: vec![None; value.groups],
+            nodes: value.nodes.clone(),
+            current_node: Some(0),
+            time_same: vec![0; value.time_same],
+        }
+    }
+}
+
 impl World {
-    pub fn next(mut self, text: &str) -> Option<Vec<World>> {
+    pub gen fn all_matchs<'a>(redgex: &RedGex, text: &'a str) -> Vec<&'a str> {
+        let mut futures = VecDeque::new();
+        let mut i = 0;
+
+        let mut res = Vec::new();
+        loop {
+            let current = if let Some(current) = futures.pop_front() {
+                current
+            } else if i < text.len() {
+                let mut w: World = redgex.into();
+                w.current_idx = i;
+                i += 1;
+                w
+            } else {
+                break;
+            };
+
+            if let Some(nexts) = current.next(text) {
+                let mut i = 0;
+                for next in nexts {
+                    if let Some(node) = next.current_node {
+                        if let Check::End(false) = next.nodes[node].check {
+                            let r: Vec<&str> = next
+                                .groups
+                                .iter()
+                                .map(|g| {
+                                    if let Some(g) = g {
+                                        &text[g.clone()]
+                                    } else {
+                                        &text[0..0]
+                                    }
+                                })
+                                .collect();
+                            if !res.contains(&r) {
+                                res.push(r.clone());
+                                yield r;
+                            }
+                        } else {
+                            futures.insert(i, next);
+                            i += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn next(mut self, text: &str) -> Option<Vec<Self>> {
         let current_node = &self.nodes[self.current_node.unwrap()];
         if !match &current_node.check {
             Check::Start() => self.current_idx == 0,
@@ -182,7 +242,7 @@ impl World {
             for t in current
                 .nexts
                 .iter()
-                .flat_map(|next| World::leafs(nodes, *next))
+                .flat_map(|next| Self::leafs(nodes, *next))
             {
                 if !r.contains(&t) {
                     r.push(t);
@@ -192,7 +252,7 @@ impl World {
         }
     }
 
-    fn sub_construct(
+    pub fn sub_construct(
         pattern: &str,
         nodes: &mut Vec<Node>,
         groups: &mut Vec<usize>,
@@ -214,7 +274,7 @@ impl World {
         }
         let ors = or_in_root(pattern);
         if !ors.is_empty() {
-            World::sub_construct(
+            Self::sub_construct(
                 &pattern[..*ors.first().unwrap()],
                 nodes,
                 groups,
@@ -224,7 +284,7 @@ impl World {
                 push_end,
             );
             for window in ors.windows(2) {
-                World::sub_construct(
+                Self::sub_construct(
                     &pattern[(window[0] + 1)..window[1]],
                     nodes,
                     groups,
@@ -234,7 +294,7 @@ impl World {
                     push_end,
                 );
             }
-            World::sub_construct(
+            Self::sub_construct(
                 &pattern[(*ors.last().unwrap() + 1)..],
                 nodes,
                 groups,
@@ -274,7 +334,7 @@ impl World {
                     parents,
                     push_end,
                 );
-                for next in World::leafs(nodes, id) {
+                for next in Self::leafs(nodes, id) {
                     nodes[next].nexts.push(end_id);
                 }
                 parent_push(nodes, id);
@@ -331,7 +391,7 @@ impl World {
                 {
                     assert!(*big_first);
                     *big_first = false;
-                    World::sub_construct(
+                    Self::sub_construct(
                         &pattern[1..],
                         nodes,
                         groups,
@@ -550,113 +610,5 @@ impl World {
                 )
             }
         }
-    }
-
-    pub fn construct(pattern: &str) -> World {
-        let mut nodes = Vec::new();
-        let mut groups = Vec::new();
-        let mut sames = 0;
-
-        let mut res = Vec::new();
-        World::sub_construct(
-            format!("({pattern})").as_str(),
-            &mut nodes,
-            &mut groups,
-            &mut sames,
-            vec![],
-            &mut |_, elem| res.push(elem),
-            true,
-        );
-        World {
-            current_idx: 0,
-            groups: vec![None; groups.len()],
-            register_group: vec![None; groups.len()],
-            nodes: Rc::from(nodes),
-            current_node: res.first().cloned(),
-            time_same: vec![0; sames],
-        }
-    }
-
-    pub fn first_match<'a>(text: &'a str, pattern: &str) -> Option<Vec<&'a str>> {
-        let mut futures = VecDeque::with_capacity(text.len() + 10);
-        {
-            let w = World::construct(pattern);
-            for c in 1..text.len() {
-                let mut w = w.clone();
-                w.current_idx = c;
-                futures.push_back(w);
-            }
-            futures.push_front(w);
-        }
-        while let Some(current) = futures.pop_front() {
-            if let Some(nexts) = current.next(text) {
-                let mut i = 0;
-                for next in nexts {
-                    if let Some(node) = next.current_node {
-                        if let Check::End(false) = next.nodes[node].check {
-                            let r = next
-                                .groups
-                                .iter()
-                                .map(|g| {
-                                    if let Some(g) = g {
-                                        &text[g.clone()]
-                                    } else {
-                                        &text[0..0]
-                                    }
-                                })
-                                .collect();
-                            return Some(r);
-                        } else {
-                            futures.insert(i, next);
-                            i += 1;
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    pub fn all_matchs<'a>(text: &'a str, pattern: &str) -> Vec<Vec<&'a str>> {
-        let mut futures = VecDeque::with_capacity(text.len() + 10);
-        {
-            let w = World::construct(pattern);
-            for c in 1..text.len() {
-                let mut w = w.clone();
-                w.current_idx = c;
-                futures.push_back(w);
-            }
-            futures.push_front(w);
-        }
-        let mut res = Vec::new();
-        while let Some(current) = futures.pop_front() {
-            if let Some(nexts) = current.next(text) {
-                let mut i = 0;
-                for next in nexts {
-                    if let Some(node) = next.current_node {
-                        if let Check::End(false) = next.nodes[node].check {
-                            let r = next
-                                .groups
-                                .iter()
-                                .map(|g| {
-                                    if let Some(g) = g {
-                                        &text[g.clone()]
-                                    } else {
-                                        &text[0..0]
-                                    }
-                                })
-                                .collect();
-                            if !res.contains(&r) {
-                                res.push(r);
-                            }
-                        } else {
-                            futures.insert(i, next);
-                            i += 1;
-                        }
-                    }
-                }
-            }
-        }
-        res
     }
 }
